@@ -1,0 +1,21 @@
+
+
+Class 
+
+Backtesting(pandas _stock_data, pandas _option_data)
+
+input: 
+
+_stock_data (columns: [DATE, CLOSE])
+
+_option_data (columns: [QUOTE_TIME_EST, EXPIRE_EST, STRIKE, C_IV, C_BID, C_ASK, C_VOLUME, P_IV, P_BID, P_ASK, P_VOLUME])
+		
+
+strategy function parameters:
+
+minimun expected earn
+minimun expected earn/max loss ratio
+minimun ITM/OTM probability
+dte
+maximun spread width
+maximun number of trades per day
