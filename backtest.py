@@ -3,10 +3,18 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import figure
+import talib as ta
 
 class backtest:
-	def __init__(self , _spread_data = (pd.DataFrame(), pd.DataFrame())):
-		self.call_spreads, self.put_spreads = _spread_data[0], _spread_data[1]
+	def __init__(self , _spread_data = (pd.DataFrame(), pd.DataFrame()), _stock_data = pd.DataFrame()):
+		self.call_spreads, self.put_spreads = _spread_data[0].copy(), _spread_data[1].copy()
+		self.stock_data = _stock_data.copy()
+
+		self.DTE = self.call_spreads.head(1).DTE
+		
+		self.call_spreads['QUOTE_TIME_EST'] = pd.to_datetime(self.call_spreads.QUOTE_TIME_EST).dt.tz_localize(None)
+		self.put_spreads['QUOTE_TIME_EST'] = pd.to_datetime(self.put_spreads.QUOTE_TIME_EST).dt.tz_localize(None)
+		self.add_technical_indicators()
 
 		self.call_spreads = self.call_spreads.sort_values(by = ['QUOTE_TIME_EST','SELL_STRIKE'], ascending = [True, True]).copy()
 		self.put_spreads = self.put_spreads.sort_values(by = ['QUOTE_TIME_EST','SELL_STRIKE'], ascending = [True, True]).copy()
@@ -14,11 +22,10 @@ class backtest:
 		self.call_satisfied = pd.DataFrame()
 		self.put_satisfied = pd.DataFrame()
 
-
 		self.call_cum_return = list()
 		self.put_cum_return = list()
 
-	def set_parm(self,parms = (0, 0, 0.5, 0.5, 0, 30, 1)):
+	def set_parm(self, parms = (-100, -1, 0, 0, 0, 50, 100)):
 		self.min_EXPECTED_EARN = parms[0]
 		self.min_EARN_RATIO = parms[1]
 
@@ -57,41 +64,42 @@ class backtest:
 
 
 
-	def draw_result(self, st):
+	def draw_result(self, _st, _show = 'BOTH'):
 		fig,ax1 = plt.subplots()
 
 		fig.set_size_inches(16, 8, forward=True)
 		# make a plot
-		ax1.plot(st.DATE, st.CLOSE,color="grey")
+		ax1.plot(_st.DATE, _st.CLOSE,color="grey")
 		# set x-axis label
 		ax1.set_xlabel("Year", fontsize = 14)
 		# set y-axis label
 		ax1.set_ylabel("Stock",
 		              color="black",
 		              fontsize=14)
-
-
-		# make a plot with different y-axis using second axis object
 		ax2 = ax1.twinx()
-
-		# print(st.DATE)
-		# print(self.call_satisfied.QUOTE_TIME_EST)
-
-		
 
 		call_by_day = (self.call_satisfied.groupby('QUOTE_TIME_EST').agg({'ACTUAL_EARN':'sum'}))
 		put_by_day = (self.put_satisfied.groupby('QUOTE_TIME_EST').agg({'ACTUAL_EARN':'sum'}))
 		call_by_day.reset_index(inplace = True)
 		put_by_day.reset_index(inplace = True)
 
+		if _show == 'BOTH':
+			ax2.plot(call_by_day.QUOTE_TIME_EST, utils.return_cum_earn_list(call_by_day),color="green")
+			ax2.plot(put_by_day.QUOTE_TIME_EST, utils.return_cum_earn_list(put_by_day),color="red")
+			ax2.legend(['Call Credit Spreads', 'Put Credit Spreads'],loc='upper left')
+		
+		if _show == 'CALL' or _show == 'C':
+			ax2.plot(call_by_day.QUOTE_TIME_EST, utils.return_cum_earn_list(call_by_day),color="green")
+			ax2.legend(['Call Credit Spreads'],loc='upper left')
 
-		ax2.plot(pd.to_datetime(call_by_day.QUOTE_TIME_EST).dt.tz_localize(None), utils.return_cum_earn_list(call_by_day),color="green")
-		ax2.plot(pd.to_datetime(put_by_day.QUOTE_TIME_EST).dt.tz_localize(None), utils.return_cum_earn_list(put_by_day),color="red")
+		if _show == 'PUT' or _show == 'P':
+			ax2.plot(put_by_day.QUOTE_TIME_EST, utils.return_cum_earn_list(put_by_day),color="red")
+			ax2.legend(['Put Credit Spreads'],loc='upper left')
+
+
 		ax2.set_ylabel("Spreads",color="black")
 		plt.title("Strategy Return VS Stock Return",fontsize=16)
 		ax1.legend(['Stock'],loc='center left')
-		ax2.legend(['Call Credit Spreads', 'Put Credit Spreads'],loc='upper left')
-
 		plt.show()
 
 	def win_rate(self):
@@ -101,7 +109,34 @@ class backtest:
 		call_win_rate = call_win/(self.call_satisfied.shape[0])
 		put_win_rate = put_win/(self.put_satisfied.shape[0])
 
-		print('Call:', (self.call_satisfied.shape[0]), 'trades, win rate:', round(call_win_rate,4))
-		print('Put:', (self.put_satisfied.shape[0]), 'trades, win rate:', round(put_win_rate,4))
+		print('Call:', (self.call_satisfied.shape[0]), 'trades, win rate:', round(call_win_rate,4), 'profits:', round(self.call_satisfied.iloc[-1].CUM_EARN,2))
+		print('Put:', (self.put_satisfied.shape[0]), 'trades, win rate:', round(put_win_rate,4), 'profits:', round(self.put_satisfied.iloc[-1].CUM_EARN,2))
 
 		return round(call_win_rate,4), round(put_win_rate,4)
+
+	def add_technical_indicators(self):
+		# technical indicators include: HIST_VOLATILITY, RSI(length = DTE)
+
+		returns = np.log(self.stock_data['CLOSE']/self.stock_data['CLOSE'].shift(1))
+		returns.fillna(0, inplace=True)
+		volatility = returns.rolling(window=252).std()*np.sqrt(252)
+		self.stock_data['HIST_VOLATILITY'] = volatility
+
+		self.stock_data['RSI'] = ta.RSI(self.stock_data['CLOSE'], timeperiod = self.DTE)
+
+		self.call_spreads = pd.merge(self.call_spreads, self.stock_data[['DATE','HIST_VOLATILITY','RSI']], left_on=  ['QUOTE_TIME_EST'],
+                   right_on= ['DATE'], 
+                   how = 'left')
+
+		self.put_spreads = pd.merge(self.put_spreads, self.stock_data[['DATE','HIST_VOLATILITY','RSI']], left_on=  ['QUOTE_TIME_EST'],
+			right_on= ['DATE'], 
+			how = 'left')
+
+		self.put_spreads.drop(columns = 'DATE', inplace = True)
+		self.call_spreads.drop(columns = 'DATE', inplace = True)
+		self.put_spreads.dropna(inplace = True)
+		self.call_spreads.dropna(inplace = True)
+
+
+
+

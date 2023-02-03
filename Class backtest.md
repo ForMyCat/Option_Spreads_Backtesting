@@ -7,7 +7,10 @@
 
 ## class backtest.backtest(_spread_date = tuple of length 2 (call spreads, put spreads))
 > Parameters:
-1. _spread_date: a length 2 tuple contains all (call, put) spreads  
+1. _spread_date: a length 2 tuple contains all (call df, put df) spreads  
+2. _stock_data: stock OHLC df
+
+
 > Attributes:
 1. call_spreads, put_spreads: store initial spreads data
    
@@ -16,10 +19,16 @@
 3. call_cum_return, put_cum_return: cumulative return on selected spreads, avaliable after backtest.go()
 
 > Methods:
-1. set_parm(parms = (-9999, -1.0, 0, 0, 0, 999, 99999))
-   - Set the parameters for creating strategy. Using the default parameter will result in returning all spreads at backtest.go().
-   - parms: a length 7 tuple contains parameter for creating strategy:(
-     1. min_EXPECTED_EARN, 
+1. go()
+   - Use after setting strategy parameters with set_parm()
+   - Will find self.call_satisfied and self.put_satisfied according to strategy.
+  
+&nbsp;
+
+2. set_parm(parms = (-9999, -1.0, 0, 0, 0, 999, 99999))
+   - Set the parameters for creating strategy. Using the default parameter will result in returning almost all spreads after go().
+   - parms: a length 7 tuple contains parameter for creating strategy: 
+     1. (min_EXPECTED_EARN, 
      2. min_EARN_RATIO,
      3. min_SELL_OTM_PROB, 
      4. min_BUY_OTM_PROB,
@@ -29,15 +38,10 @@
 
 &nbsp;
 
-1. go()
-   - Call after setting strategy parameters with set_parm()
-   - Will set self.call_satisfied and self.put_satisfied according to strategy.
-
-&nbsp;
-
-3. draw_result(st):
+3. draw_result(_st, _show):
    - Draw the actual return plot for both call/put spreads and the stock price.
-   - st: a pandas df containing stock OHLC 
+   - _st: a pandas df containing stock OHLC 
+   - _show: 'C'/'CALL' for showing call spreads only, 'P'/'PUT' for showing put spreads only, default 'BOTH'
 
 
 &nbsp;
@@ -52,3 +56,8 @@
    - A helper function used by backtest.go().
    - df_: a pandas df containing either the original call/put spreads data
    - return: a pandas df containing the spreads that satisfy the strategy
+
+&nbsp;
+
+6. add_technical_indicators()
+   - A helper function used in \_\_init\_\_ to create technical indicators.

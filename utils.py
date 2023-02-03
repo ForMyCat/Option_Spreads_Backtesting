@@ -64,6 +64,8 @@ def return_cum_earn_list(_df):
 
 def prep_op_st_df(_ticker = 'SPY'):
     path = 'Options_Data\\' + _ticker + '\\' + _ticker +'_Options_EOD_2010_2022.csv'
+    # For Mac, use the following line
+    # path = 'Options_Data/' + _ticker + '/' + _ticker +'_Options_EOD_2010_2022.csv'
     df = pd.read_csv(path)
     op = pd.DataFrame()
     op['QUOTE_TIME_UTC'] = pd.to_datetime(df.QUOTE_UNIXTIME,unit='s',utc = False) #convert date from UNIX to UTC
