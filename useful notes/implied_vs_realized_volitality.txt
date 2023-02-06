@@ -1,0 +1,3 @@
+Definition:  https://www.macroption.com/historical-volatility-calculation/
+
+Query Tool: https://www.alphaquery.com/stock/SPY/volatility-option-statistics/180-day/historical-volatility
