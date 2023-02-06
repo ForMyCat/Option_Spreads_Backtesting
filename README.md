@@ -5,7 +5,7 @@
 
     This is a framework for efficiently backtesting option spreads (Call/Put Credit spreads) performance. You can customize different spread parameters to backtest your strategy with SPY data for the past 10 years.
 
-# Install 
+# Installation 
     1. Create and activate a new Anaconda environment
 
     2. In anaconda power shell, run
