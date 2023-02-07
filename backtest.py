@@ -25,7 +25,7 @@ class backtest:
 		self.call_cum_return = list()
 		self.put_cum_return = list()
 
-	def set_parm(self, parms , start_date, end_date):
+	def set_parm(self, parms = (None,None,None,None,None,None,None,None), start_date = None , end_date = None ):
 
 		parm0 = parms[0] if parms[0] != None else -200
 		parm1 = parms[1] if parms[1] != None else -1
@@ -56,7 +56,35 @@ class backtest:
 	def go(self):
 		self.call_satisfied, self.call_cum_return = self.filter_spreads(self.call_spreads)
 		self.put_satisfied, self.put_cum_return = self.filter_spreads(self.put_spreads)
+		self.combinational_earn()
 		print(f'Done backtesting from %s to %s!'%(self.start_date, self.end_date))
+
+	def combinational_earn(self):
+		# Calculate total cumulative return
+		a = self.call_satisfied[['QUOTE_TIME_EST','ACTUAL_EARN']].copy()
+		b = self.put_satisfied[['QUOTE_TIME_EST','ACTUAL_EARN']].copy()
+
+		a = (a.groupby('QUOTE_TIME_EST').agg({'ACTUAL_EARN':'sum'}))
+		b = (b.groupby('QUOTE_TIME_EST').agg({'ACTUAL_EARN':'sum'}))
+
+		a = a.rename(columns={'ACTUAL_EARN':'CALL_ACTUAL_EARN'})
+		b = b.rename(columns={'ACTUAL_EARN':'PUT_ACTUAL_EARN'})
+		
+		a.reset_index(inplace = True)
+		b.reset_index(inplace = True)
+
+		a.index = a.QUOTE_TIME_EST
+		b.index = b.QUOTE_TIME_EST
+
+		c = pd.concat([a[['CALL_ACTUAL_EARN']], b[['PUT_ACTUAL_EARN']]],axis = 1)
+		c['TOTAL_EARN_TODAY'] = c.CALL_ACTUAL_EARN.fillna(0) + c.PUT_ACTUAL_EARN.fillna(0)
+		c.reset_index(inplace = True)
+		
+		d = c[['QUOTE_TIME_EST','TOTAL_EARN_TODAY']].copy()
+		d['CUM_EARN'] = d.TOTAL_EARN_TODAY.cumsum()
+		self.combo_earn_by_date = d
+
+		return d
 		 
 
 	def filter_spreads(self, df_):
@@ -72,9 +100,9 @@ class backtest:
 		df_ = df_.loc[(df_.WIDTH >= self.min_width) & (df_.WIDTH <= self.max_width)]
 		df_ = df_.loc[df_.PREMIUM >= self.min_PREMIUM]
 
-		df_ = df_.sort_values(by = ['QUOTE_TIME_EST','PREMIUM'], ascending = [True, False]).groupby('QUOTE_TIME_EST').head(self.max_trades_per_day).copy()
+		df_ = df_.sort_values(by = ['QUOTE_TIME_EST','EXPECTED_EARN_RATIO'], ascending = [True, False]).groupby('QUOTE_TIME_EST').head(self.max_trades_per_day).copy()
 		df_['ACTUAL_EARN'] = df_.apply(lambda x: utils.calculate_actual_earn(x), axis = 1)
-		cum_return = utils.return_cum_earn_list(df_)
+		cum_return = df_.ACTUAL_EARN.cumsum()
 		df_['CUM_EARN'] = cum_return
 		df_['WIN'] = df_['ACTUAL_EARN'] > 0
 
@@ -99,21 +127,33 @@ class backtest:
 
 		call_by_day = (self.call_satisfied.groupby('QUOTE_TIME_EST').agg({'ACTUAL_EARN':'sum'}))
 		put_by_day = (self.put_satisfied.groupby('QUOTE_TIME_EST').agg({'ACTUAL_EARN':'sum'}))
+		
 		call_by_day.reset_index(inplace = True)
 		put_by_day.reset_index(inplace = True)
 
 		if _show == 'BOTH':
-			ax2.plot(call_by_day.QUOTE_TIME_EST, utils.return_cum_earn_list(call_by_day),color="green")
-			ax2.plot(put_by_day.QUOTE_TIME_EST, utils.return_cum_earn_list(put_by_day),color="red")
+			ax2.plot(call_by_day.QUOTE_TIME_EST, call_by_day.ACTUAL_EARN.cumsum(),color="green")
+			ax2.plot(put_by_day.QUOTE_TIME_EST, put_by_day.ACTUAL_EARN.cumsum(),color="red")
 			ax2.legend(['Call Credit Spreads', 'Put Credit Spreads'],loc='upper left')
 		
 		if _show == 'CALL' or _show == 'C':
-			ax2.plot(call_by_day.QUOTE_TIME_EST, utils.return_cum_earn_list(call_by_day),color="green")
+			ax2.plot(call_by_day.QUOTE_TIME_EST, call_by_day.ACTUAL_EARN.cumsum(),color="green")
 			ax2.legend(['Call Credit Spreads'],loc='upper left')
 
 		if _show == 'PUT' or _show == 'P':
-			ax2.plot(put_by_day.QUOTE_TIME_EST, utils.return_cum_earn_list(put_by_day),color="red")
+			ax2.plot(put_by_day.QUOTE_TIME_EST, put_by_day.ACTUAL_EARN.cumsum(),color="red")
 			ax2.legend(['Put Credit Spreads'],loc='upper left')
+
+		if _show == 'COMBO':
+			ax2.plot(self.combinational_earn().QUOTE_TIME_EST, self.combinational_earn().CUM_EARN,color="purple")
+			ax2.legend(['Combo Earn'],loc='upper left')
+
+		if _show == 'ALL':
+			ax2.plot(self.combinational_earn().QUOTE_TIME_EST, self.combinational_earn().CUM_EARN,color="purple")
+			ax2.plot(call_by_day.QUOTE_TIME_EST, call_by_day.ACTUAL_EARN.cumsum(),color="green")
+			ax2.plot(put_by_day.QUOTE_TIME_EST, put_by_day.ACTUAL_EARN.cumsum(),color="red")
+			ax2.legend(['Combo Earn','Call Credit Spreads', 'Put Credit Spreads'],loc='upper left')
+
 
 
 		ax2.set_ylabel("Spreads",color="black")
@@ -147,15 +187,21 @@ class backtest:
 		self.stock_data['RSI'] = ta.RSI(self.stock_data['CLOSE'], timeperiod = self.DTE)
 
 		# Add three EMA data
+		self.stock_data['EMA_7'] = ta.EMA(self.stock_data['CLOSE'], timeperiod = 7)
 		self.stock_data['EMA_50'] = ta.EMA(self.stock_data['CLOSE'], timeperiod = 50)
 		self.stock_data['EMA_252'] = ta.EMA(self.stock_data['CLOSE'], timeperiod = 252)
 		self.stock_data['EMA_DTE'] = ta.EMA(self.stock_data['CLOSE'], timeperiod = self.DTE)
 
-		self.call_spreads = pd.merge(self.call_spreads, self.stock_data[['DATE','HIST_VOLATILITY','RSI','EMA_252','EMA_50','EMA_DTE']], left_on=  ['QUOTE_TIME_EST'],
+		# Add trend indicator, bull:1, bear:0, TREND_REVERSAL: crossover
+		self.stock_data['TREND'] = 0.0
+		self.stock_data['TREND'] = np.where(self.stock_data['EMA_DTE'] > self.stock_data['EMA_50'], 1.0, 0.0)
+		self.stock_data['TREND_REVERSAL'] = self.stock_data['TREND'].diff()
+
+		self.call_spreads = pd.merge(self.call_spreads, self.stock_data[['DATE','HIST_VOLATILITY','RSI','EMA_252','EMA_50','EMA_7','EMA_DTE','TREND','TREND_REVERSAL']], left_on=  ['QUOTE_TIME_EST'],
                    right_on= ['DATE'], 
                    how = 'left')
 
-		self.put_spreads = pd.merge(self.put_spreads, self.stock_data[['DATE','HIST_VOLATILITY','RSI','EMA_252','EMA_50','EMA_DTE']], left_on=  ['QUOTE_TIME_EST'],
+		self.put_spreads = pd.merge(self.put_spreads, self.stock_data[['DATE','HIST_VOLATILITY','RSI','EMA_252','EMA_50','EMA_7','EMA_DTE','TREND','TREND_REVERSAL']], left_on=  ['QUOTE_TIME_EST'],
 			right_on= ['DATE'], 
 			how = 'left')
 
@@ -163,6 +209,7 @@ class backtest:
 		self.call_spreads.drop(columns = 'DATE', inplace = True)
 		self.put_spreads.dropna(inplace = True)
 		self.call_spreads.dropna(inplace = True)
+
 
 	def report(self, opion_type = 'BOTH'):
 
@@ -199,6 +246,19 @@ class backtest:
 			print('Average Gain:', round(self.put_satisfied.ACTUAL_EARN.mean(),2))
 			print('Average Expectation:', round(self.put_satisfied.SELL_OTM_PROB.mean(),2))
 
+	def technical_indicator_search(self, opion_type = 'BOTH', _min_iv_ratio = None):
+		min_iv_ratio = _min_iv_ratio if _min_iv_ratio != None else 0
+		self.go()
+		if opion_type in ['BOTH','C','CALL']:
+			self.call_satisfied = self.call_satisfied.loc[(self.call_satisfied.SELL_ATM_IV/self.call_satisfied.HIST_VOLATILITY) >= min_iv_ratio]
+			self.call_satisfied = self.call_satisfied.loc[self.call_satisfied.TREND == 0]
+
+		if opion_type in ['BOTH','P','PUT']:
+			self.put_satisfied = self.put_satisfied.loc[(self.put_satisfied.SELL_ATM_IV/self.put_satisfied.HIST_VOLATILITY) >= min_iv_ratio]
+			self.put_satisfied = self.put_satisfied.loc[self.put_satisfied.TREND == 0]
+
+		self.put_satisfied['CUM_EARN'] = self.put_satisfied.ACTUAL_EARN.cumsum()
+		self.call_satisfied['CUM_EARN'] = self.call_satisfied.ACTUAL_EARN.cumsum()
 
 
 

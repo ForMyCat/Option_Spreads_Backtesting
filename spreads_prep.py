@@ -127,11 +127,11 @@ class spreads_prep:
 			single_day_options = single_day_options.sort_values(by='STRIKE', ascending = True).reset_index(drop=True).copy()
 
 			single_day_call_spreads = {'QUOTE_TIME_EST':[],'SELL_PRICE':[],'BUY_PRICE':[], 'DTE':[], 'isCALL':[],
-										'SELL_STRIKE':[],'BUY_STRIKE':[],'PREMIUM':[],'MAX_LOSS':[],
+										'SELL_STRIKE':[],'BUY_STRIKE':[],'PREMIUM':[],'MAX_LOSS':[],'SELL_ATM_IV':[],'BUY_ATM_IV':[],'SELL_IV':[],'BUY_IV':[],
 										'EXPECTED_EARN':[],'EXPECTED_EARN_RATIO':[],'BUY_OTM_PROB':[],'SELL_OTM_PROB':[],'CURRENT_PRICE':[],'PRICE@EXPIRE':[]}
 
 			single_day_put_spreads = {'QUOTE_TIME_EST':[],'SELL_PRICE':[],'BUY_PRICE':[], 'DTE':[], 'isCALL':[],
-										'SELL_STRIKE':[],'BUY_STRIKE':[],'PREMIUM':[],'MAX_LOSS':[],
+										'SELL_STRIKE':[],'BUY_STRIKE':[],'PREMIUM':[],'MAX_LOSS':[],'SELL_ATM_IV':[],'BUY_ATM_IV':[],'SELL_IV':[],'BUY_IV':[],
 										'EXPECTED_EARN':[],'EXPECTED_EARN_RATIO':[],'BUY_OTM_PROB':[],'SELL_OTM_PROB':[],'CURRENT_PRICE':[],'PRICE@EXPIRE':[]}
 			# if cc >=50:
 			# 	break
@@ -155,6 +155,10 @@ class spreads_prep:
 							single_day_call_spreads['DTE'].append(op_low.DTE)
 							single_day_call_spreads['isCALL'].append(1)
 							single_day_call_spreads['SELL_STRIKE'].append(op_low.STRIKE)
+							single_day_call_spreads['SELL_ATM_IV'].append(op_low.C_ATM_IV)
+							single_day_call_spreads['BUY_ATM_IV'].append(op_high.C_ATM_IV)
+							single_day_call_spreads['SELL_IV'].append(op_low.C_IV)
+							single_day_call_spreads['BUY_IV'].append(op_high.C_IV)
 							single_day_call_spreads['SELL_PRICE'].append(op_low.C_BID)
 							single_day_call_spreads['BUY_PRICE'].append(op_high.C_ASK)
 							single_day_call_spreads['BUY_STRIKE'].append(op_high.STRIKE)
@@ -170,24 +174,28 @@ class spreads_prep:
 
 						if (op_high.STRIKE < op_high.CURRENT_PRICE): # Put spread: higher strike is sell, in this case sell op_high
 
-								earn = self.calculate_expected_earn('PUT', sell = op_high, buy = op_low)
-								earn_ratio = earn/ abs(op_low.STRIKE - op_high.STRIKE)
+							earn = self.calculate_expected_earn('PUT', sell = op_high, buy = op_low)
+							earn_ratio = earn/ abs(op_low.STRIKE - op_high.STRIKE)
 
-								single_day_put_spreads['QUOTE_TIME_EST'].append(date)
-								single_day_put_spreads['DTE'].append(op_high.DTE)
-								single_day_put_spreads['isCALL'].append(0)
-								single_day_put_spreads['SELL_STRIKE'].append(op_high.STRIKE)
-								single_day_put_spreads['SELL_PRICE'].append(op_high.P_BID)									
-								single_day_put_spreads['BUY_PRICE'].append(op_low.P_ASK)
-								single_day_put_spreads['BUY_STRIKE'].append(op_low.STRIKE)
-								single_day_put_spreads['PREMIUM'].append(op_high.P_BID - op_low.P_ASK)
-								single_day_put_spreads['MAX_LOSS'].append(op_high.STRIKE - op_low.STRIKE - (op_high.P_BID - op_low.P_ASK))
-								single_day_put_spreads['EXPECTED_EARN'].append(earn)
-								single_day_put_spreads['EXPECTED_EARN_RATIO'].append(earn_ratio)
-								single_day_put_spreads['SELL_OTM_PROB'].append(op_high.P_OTM_PROB)
-								single_day_put_spreads['BUY_OTM_PROB'].append(op_low.P_OTM_PROB)
-								single_day_put_spreads['CURRENT_PRICE'].append(op_high.CURRENT_PRICE)
-								single_day_put_spreads['PRICE@EXPIRE'].append(op_high['PRICE@EXPIRE'])
+							single_day_put_spreads['QUOTE_TIME_EST'].append(date)
+							single_day_put_spreads['DTE'].append(op_high.DTE)
+							single_day_put_spreads['isCALL'].append(0)
+							single_day_put_spreads['SELL_STRIKE'].append(op_high.STRIKE)
+							single_day_put_spreads['SELL_ATM_IV'].append(op_high.P_ATM_IV)
+							single_day_put_spreads['BUY_ATM_IV'].append(op_low.P_ATM_IV)
+							single_day_put_spreads['SELL_IV'].append(op_high.P_IV)
+							single_day_put_spreads['BUY_IV'].append(op_low.P_IV)
+							single_day_put_spreads['SELL_PRICE'].append(op_high.P_BID)									
+							single_day_put_spreads['BUY_PRICE'].append(op_low.P_ASK)
+							single_day_put_spreads['BUY_STRIKE'].append(op_low.STRIKE)
+							single_day_put_spreads['PREMIUM'].append(op_high.P_BID - op_low.P_ASK)
+							single_day_put_spreads['MAX_LOSS'].append(op_high.STRIKE - op_low.STRIKE - (op_high.P_BID - op_low.P_ASK))
+							single_day_put_spreads['EXPECTED_EARN'].append(earn)
+							single_day_put_spreads['EXPECTED_EARN_RATIO'].append(earn_ratio)
+							single_day_put_spreads['SELL_OTM_PROB'].append(op_high.P_OTM_PROB)
+							single_day_put_spreads['BUY_OTM_PROB'].append(op_low.P_OTM_PROB)
+							single_day_put_spreads['CURRENT_PRICE'].append(op_high.CURRENT_PRICE)
+							single_day_put_spreads['PRICE@EXPIRE'].append(op_high['PRICE@EXPIRE'])
 
 
 			# Save the best call/put spread of the day in a dictionary
