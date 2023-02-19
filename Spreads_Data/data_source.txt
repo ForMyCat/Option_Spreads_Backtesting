@@ -1,0 +1,7 @@
+eth 1h:
+https://data.binance.vision/?prefix=data/spot/daily/klines/ETHUSDT/
+
+Option data 网站：
+https://discountoptiondata.com/ 350 USD (2005 to 2022)
+https://optiondata.org/    590 USD (2002-05-01 to 2023-01-12)
+https://www.optionsdx.com/?post_type=product 免费EOD

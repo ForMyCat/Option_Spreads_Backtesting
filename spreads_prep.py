@@ -81,6 +81,7 @@ class spreads_prep:
 
 		#Join ATM IV Data By Date
 		temp_df = temp_df.set_index('QUOTE_TIME_EST').join(atm_options.set_index('QUOTE_TIME_EST')[['P_ATM_IV','C_ATM_IV']]).reset_index()
+		
 		p_std = np.sqrt((temp_df['DTE']) * (temp_df['P_ATM_IV']**2) / 252)
 		c_std = np.sqrt((temp_df['DTE']) * (temp_df['C_ATM_IV']**2) / 252)
 		

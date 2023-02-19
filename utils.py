@@ -44,7 +44,6 @@ def calculate_actual_earn(x):
     if x.isCALL:
         buy_itm = x['PRICE@EXPIRE'] > x.BUY_STRIKE
         sell_itm = x['PRICE@EXPIRE'] > x.SELL_STRIKE
-
         actual_earn = x.PREMIUM + buy_itm * (x['PRICE@EXPIRE'] - x.BUY_STRIKE) - sell_itm * (x['PRICE@EXPIRE'] - x.SELL_STRIKE)
     else:
         buy_itm = x['PRICE@EXPIRE'] < x.BUY_STRIKE

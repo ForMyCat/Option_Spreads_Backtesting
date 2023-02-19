@@ -1,0 +1,3 @@
+Black-Scholes(European Style) : https://www.investopedia.com/terms/b/blackscholes.asp
+
+Bjerksund-Stensland(American Style): https://www.investopedia.com/terms/b/bjerksundstensland-model.asp
