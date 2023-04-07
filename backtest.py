@@ -385,10 +385,10 @@ class backtest:
 			yr_profit_ratio = round(yr_df.Profit.sum()/starting_funds,4)
 			annual_return_ratio.append(yr_profit_ratio)
 
-		print(annual_return_ratio)
+		print('Annual return rate:',annual_return_ratio)
 		
 		annual_return_std = np.std(annual_return_ratio)
-		print('std:', annual_return_std)
+		print('Annual return std:', annual_return_std)
 		# sharpe = ((total_return_ratio/((self.end_date - self.start_date).days/365)))/annual_return_std
 		sharpe = (np.mean(annual_return_ratio))/annual_return_std
 
