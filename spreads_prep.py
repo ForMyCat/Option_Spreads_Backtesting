@@ -5,250 +5,222 @@ from datetime import date, timezone
 from datetime import timedelta
 import scipy
 import time
+import gc
+import os, glob
 
 class spreads_prep:
-	def __init__(self , _option_data, _stock_data):
-		self.start_date, self.end_date, self.df_aligned = self.preproc_data(_stock_data, _option_data)
-		self.calculate_probability()
-		self.all_calls = None
-		self.all_puts = None
+	def __init__(self , _option_data, _stock_data, DTE = [1,2,3,4,5,6,7]):
+		self.preproc_data(_stock_data, _option_data)
+
+		time_2 = time.time()
+		ptime_2 = time.process_time()
+		self.tk = _option_data.iloc[0].Symbol
+		self.calls = self.calculate_probability(self.calls)
+		self.puts = self.calculate_probability(self.puts)
+		time_3 = time.time()
+		ptime_3 = time.process_time()
+		print(f'Done Calculating Probability! CPU time: %.2f seconds, Total time: %.2f seconds'%(ptime_3 - ptime_2, time_3 - time_2))
+
+		for d in DTE:
+			time_0 = time.time()
+			ptime_0 = time.process_time()
+			call_spreads = self.spread_search(d, self.calls)
+			put_spreads = self.spread_search(d, self.puts)
+			call_spreads.to_csv('SpreadsData\\' + self.tk + '\\DTE'+ str(d)+ '_' + self.tk +'_CallSpreads.csv')
+			put_spreads.to_csv('SpreadsData\\' + self.tk + '\\DTE'+ str(d)+ '_' + self.tk +'_PutSpreads.csv')
+			del call_spreads
+			del put_spreads
+			gc.collect()
+			time_1 = time.time()
+			ptime_1 = time.process_time()
+			print(f'Done Calculating Spreads with DTE = %s! CPU time: %.2f seconds, Total time: %.2f seconds'%(str(d), ptime_1 - ptime_0, time_1 - time_0))
 
 	def preproc_data(self, st, op):
 
 		time_0 = time.time()
 		ptime_0 = time.process_time()
 
-		options_clean = op.copy()
-		all_stock = st.copy()
+		op_clean = op.copy()
+		op_clean['QuoteDate'] = pd.to_datetime(op_clean.QuoteDate)
+		op_clean['ExpirationDate'] = pd.to_datetime(op_clean.ExpirationDate)
+		op_clean = op_clean.loc[op_clean.ExpirationDate.dt.date < datetime.date.today()]
 
-		# Exclude Options with 0 DTE Since It Will Cause Probability Calculation Error
-		options_clean = options_clean.loc[options_clean.DTE != 0].reset_index(drop = True)
+		# Map expiration date to the cloest previous closing date
+		date_map = dict()
+		market_date = set(st.Date)
+		op_exp_date = list(set(op_clean['ExpirationDate']))
 
-		#Exclude Options with 0 Transaction
-		# for i in ['C_VOLUME','P_VOLUME']:
-		# 	options_clean[i] = pd.to_numeric(options_clean[i],errors='coerce')
-		# options_clean = options_clean.loc[(options_clean.C_VOLUME != 0) & (options_clean.P_VOLUME != 0)].reset_index(drop = True)
-		
-		#Convert All Data Columns to Numeric
-		for i in ['STRIKE','DTE','C_IV','C_BID','C_ASK','P_IV','P_BID','P_ASK']:
-			options_clean[i] = pd.to_numeric(options_clean[i],errors='coerce')
+		def expire_on_market_date(op_exp,market_open):
+			return op_exp in market_open
 
-		# options_clean = options_clean.reset_index(drop = True)
-		options_clean = options_clean.dropna().reset_index(drop = True)
+		for i in op_exp_date:
+			checking_date = i 
+			while not expire_on_market_date(checking_date,market_date):
+				checking_date -= timedelta(days = 1)
+			date_map[i] = checking_date
 
+		op_clean['ExpirationDate'] = op_clean['ExpirationDate'].map(date_map)
 
-		#Line up stock data with option data
-		all_stock.index = pd.to_datetime(all_stock.DATE).dt.tz_localize(None)
-		options_clean.index = pd.to_datetime(options_clean.EXPIRE_EST).dt.tz_localize(None)
+		op_clean['Dte'] = (op_clean.ExpirationDate - op_clean.QuoteDate).dt.days.astype(int)
+		op_clean['key'] = list(zip(op_clean.StrikePrice, op_clean.ExpirationDate))
 
-		start_date =  max((all_stock.index).min(), (options_clean.index).min()).date()
-		end_date =  min((all_stock.index).max(), (options_clean.index).max()).date()
+		#Convert Columns to Numeric
+		for i in ['BidSize','OpenInterest', 'Volume']:
+			op_clean[i] =  pd.to_numeric(op_clean[i], errors='coerce',downcast = 'integer')
+
+		op_clean = op_clean.loc[op_clean.Volume != 0]
+
+		for i in ['AskPrice','BidPrice','LastPrice', 'StrikePrice','UnderlyingPrice','ImpliedVolatility','Delta','Gamma', 'Vega', 'Rho', 'Theta']:
+			op_clean[i] =  pd.to_numeric(op_clean[i], errors='coerce')
+
+		op_clean = op_clean.dropna().reset_index(drop = True)
+
+		# # Exclude Options with 0 DTE Since It Will Cause Probability Calculation Error
+		# op_zero = op_clean.loc[op_clean['Dte'] == 0]
+		# op_not_zero = op_clean.loc[op_clean['Dte'] > 0]
+
+		self.start_date =  max((st.Date).min(), (op_clean.QuoteDate).min())
+		self.end_date =  min((st.Date).max(), (op_clean.ExpirationDate).max())
 
 		# Join Option and Stock Price by Expiry Date to create PRICE@EXPIRE Column
-		# df_aligned = options_clean.join(all_stock['CLOSE']).copy()
-		df_aligned = options_clean.join(all_stock['CLOSE']).dropna().copy()
-		df_aligned.rename(columns = {'CLOSE':'PRICE@EXPIRE'}, inplace = True)
+		st = st.copy()
+		st['Price@Expiration'] = st['Close']
+		st.index = st.Date
+		op_clean.index = op_clean.ExpirationDate
 
+		exp_date = set(op_clean.ExpirationDate)
+		exp_date.update(st.Date)
+		exp_df = pd.DataFrame(exp_date, columns = ['Date'])
+		exp_df = exp_df.sort_values(by = 'Date').reset_index(drop = True)
+		exp_df.index = exp_df.Date
+		exp_df = exp_df.join(st['Price@Expiration'])
+		exp_df = exp_df.ffill()
+		op_aligned = op_clean.join(exp_df['Price@Expiration'])
+		op_aligned.dropna(inplace = True)
+		op_aligned.reset_index(inplace = True, drop = True)
 
-		# Join Option and Stock Price by Quote Date to create CURRENT_PRICE Column
-		df_aligned.index = pd.to_datetime(df_aligned.QUOTE_TIME_EST)
-		# df_aligned = df_aligned.join(all_stock['CLOSE']).copy()
-		df_aligned = df_aligned.join(all_stock['CLOSE']).dropna().copy()
-		df_aligned.rename(columns = {'CLOSE':'CURRENT_PRICE'}, inplace = True)
-		# df_aligned.drop(columns = ['QUOTE_TIME_UTC','EXPIRE_UTC', 'EXPIRE_EST'], axis = 1, inplace = True)
+		self.calls = op_aligned.loc[op_aligned['PutCall'] == 'call'].reset_index(drop = True).copy()
+		self.puts = op_aligned.loc[op_aligned['PutCall'] == 'put'].reset_index(drop = True).copy()
 
-		# Drop options with zero IV
-		df_aligned =df_aligned.loc[(df_aligned.P_IV != 0) & (df_aligned.C_IV != 0)].copy()
-
-		df_aligned.reset_index(inplace = True, drop = True)
+		self.op_aligned = op_aligned.copy()
 
 		time_1 = time.time()
 		ptime_1 = time.process_time()
 		print(f'Done Cleaning Data! CPU time: %.2f seconds, Total time: %.2f seconds'%(ptime_1 - ptime_0, time_1 - time_0))
 		
-		return start_date, end_date, df_aligned.copy()
 
-	def calculate_probability(self):
-		time_2 = time.time()
-		ptime_2 = time.process_time()
+	def calculate_probability(self, options):
+		
+		temp_df = options.copy()
 
-		temp_df = self.df_aligned.copy()
-		temp_df['STRIKE_DISTANCE'] = abs(temp_df['STRIKE'] - temp_df['CURRENT_PRICE'])
+		temp_df['Strike_Distance'] = abs(temp_df['StrikePrice'] - temp_df['UnderlyingPrice'])
 
 		#Find ATM IV Data For Each Date
-		atm_options = temp_df.sort_values(by = ['QUOTE_TIME_EST','STRIKE_DISTANCE']).groupby('QUOTE_TIME_EST').head(1).copy()
-		atm_options.rename(columns = {'P_IV':'P_ATM_IV','C_IV':'C_ATM_IV'}, inplace = True)
+		atm_options = temp_df.sort_values(by = ['QuoteDate','Strike_Distance']).groupby(['QuoteDate','Dte']).head(1).copy()
+		atm_options.rename(columns = {'ImpliedVolatility':'ATM_IV'}, inplace = True)
 
 		#Join ATM IV Data By Date
-		temp_df = temp_df.set_index('QUOTE_TIME_EST').join(atm_options.set_index('QUOTE_TIME_EST')[['P_ATM_IV','C_ATM_IV']]).reset_index()
+		temp_df = pd.merge(temp_df, atm_options[['QuoteDate','Dte','ATM_IV']],  how='left', left_on=['QuoteDate','Dte'], right_on = ['QuoteDate','Dte'])
 		
-		p_std = np.sqrt((temp_df['DTE']) * (temp_df['P_ATM_IV']**2) / 252)
-		c_std = np.sqrt((temp_df['DTE']) * (temp_df['C_ATM_IV']**2) / 252)
+		_std = np.sqrt((temp_df['Dte']) * (temp_df['ATM_IV']**2) / 252)
 		
-		price_to_strike_ratio = (np.log(temp_df['CURRENT_PRICE']/ temp_df['STRIKE']))
+		price_to_strike_ratio = (np.log(temp_df['UnderlyingPrice']/ temp_df['StrikePrice']))
 
-		temp_df['P_ITM_PROB'] = 1 - scipy.stats.norm.cdf((price_to_strike_ratio)/p_std)
-		temp_df['C_ITM_PROB'] = scipy.stats.norm.cdf(price_to_strike_ratio/c_std)
+		if temp_df.iloc[0].PutCall == 'call':
+			temp_df['ITM_Prob'] = scipy.stats.norm.cdf(price_to_strike_ratio/_std)
+		elif temp_df.iloc[0].PutCall == 'put':
+			temp_df['ITM_Prob'] = 1 - scipy.stats.norm.cdf((price_to_strike_ratio)/_std)
+		else:
+			print('Missing Option Type.')
+			return
 
-		temp_df['P_OTM_PROB'] = 1 - temp_df['P_ITM_PROB']
-		temp_df['C_OTM_PROB'] = 1 - temp_df['C_ITM_PROB']
+		temp_df['OTM_Prob'] = 1 - temp_df['ITM_Prob']
 
-		self.df_aligned = temp_df.copy()
-		time_3 = time.time()
-		ptime_3 = time.process_time()
-
-		print(f'Done Calculating Probability! CPU time: %.2f seconds, Total time: %.2f seconds'%(ptime_3 - ptime_2, time_3 - time_2))
+		return temp_df.copy()
 
 
-	def spread_search(self, DTE, start_date, end_date):
-		time_0 = time.time()
-		ptime_0 = time.process_time()
+	def spread_search(self, DTE, options):
+		start_date = self.start_date
+		end_date = self.end_date
+		# print(f'Start searching for spreads from %s to %s'%(start_date,end_date))
+		op_cols = ['QuoteDate','Symbol', 'ExpirationDate', 'AskPrice', 'BidPrice','Dte'
+           ,'PutCall', 'StrikePrice','UnderlyingPrice','OTM_Prob','ImpliedVolatility','ATM_IV','Price@Expiration']
+		
+		df_search = options[op_cols].copy()
+		df_search = df_search.loc[(df_search['QuoteDate'] >= start_date) & (df_search['ExpirationDate'] <= end_date)]
+		df_search = df_search.loc[df_search.Dte == DTE]
+		df_search = df_search.sort_values(by=['QuoteDate','StrikePrice']).reset_index(drop=True)
 
-		print(f'Start searching for spreads from %s to %s'%(start_date,end_date))
-		df_search = self.df_aligned.copy()
-		df_search = df_search.loc[(df_search['QUOTE_TIME_EST'] >= start_date) & (df_search['QUOTE_TIME_EST'] <= end_date)].copy()
-		df_search = df_search.loc[(df_search['DTE']).round(2) == DTE].copy()
-		df_search = df_search.sort_values(by='QUOTE_TIME_EST').reset_index(drop=True).copy()
-		# date_range = pd.date_range(start_date, end_date, freq = 'D')
-		all_date = df_search['QUOTE_TIME_EST'].unique()
+		all_date = df_search['QuoteDate'].unique()
+		isCall = 1 if options.iloc[0].PutCall == 'call' else 0
 
-		# cc = 0
+		all_spreads = pd.DataFrame()
+		
+		def calculate_expected_earn(sell, buy):
+			expected_earn = -999
+			premiun = sell.BidPrice - buy.AskPrice
+			max_loss = abs(buy.StrikePrice - sell.StrikePrice)
+			expected_earn = premiun - (1 - sell.OTM_Prob) * max_loss
 
-		all_puts = pd.DataFrame()
-		all_calls = pd.DataFrame()
+			return expected_earn
 		# calls_list = list()
 		# puts_list = list()
+		
+		spreads_dict = {'QuoteDate':[],'ExpirationDate':[],'SellPrice':[],'BuyPrice':[], 'Dte':[], 'isCALL':[],
+								'SellStrike':[],'BuyStrike':[],'Premium':[],'MaxLoss':[],'ATM_IV':[],'Sell_IV':[],'Buy_IV':[],
+								'ExpectedEarn':[],'ExpectedEarnRatio':[],'Buy_OTM_Prob':[],'Sell_OTM_Prob':[],'UnderlyingPrice':[]
+							,'Price@Expiration':[]}
 
 		for date in all_date:
-			time_4 = time.time()
-			ptime_4 = time.process_time()
+			single_day_options = df_search.loc[df_search['QuoteDate'] == date].copy()
 
-			single_day_options = df_search.loc[df_search['QUOTE_TIME_EST'] == date].copy()
+			single_day_options = single_day_options.sort_values(by='StrikePrice', ascending = True).reset_index(drop=True).copy()
+
+			single_day_op_index = list(single_day_options.index)
+			single_day_op_index.sort()
 			
-			single_day_options = single_day_options.sort_values(by='STRIKE', ascending = True).reset_index(drop=True).copy()
+			for i in single_day_op_index:
 
-			single_day_call_spreads = {'QUOTE_TIME_EST':[],'SELL_PRICE':[],'BUY_PRICE':[], 'DTE':[], 'isCALL':[],
-										'SELL_STRIKE':[],'BUY_STRIKE':[],'PREMIUM':[],'MAX_LOSS':[],'SELL_ATM_IV':[],'BUY_ATM_IV':[],'SELL_IV':[],'BUY_IV':[],
-										'EXPECTED_EARN':[],'EXPECTED_EARN_RATIO':[],'BUY_OTM_PROB':[],'SELL_OTM_PROB':[],'CURRENT_PRICE':[],'PRICE@EXPIRE':[]}
-
-			single_day_put_spreads = {'QUOTE_TIME_EST':[],'SELL_PRICE':[],'BUY_PRICE':[], 'DTE':[], 'isCALL':[],
-										'SELL_STRIKE':[],'BUY_STRIKE':[],'PREMIUM':[],'MAX_LOSS':[],'SELL_ATM_IV':[],'BUY_ATM_IV':[],'SELL_IV':[],'BUY_IV':[],
-										'EXPECTED_EARN':[],'EXPECTED_EARN_RATIO':[],'BUY_OTM_PROB':[],'SELL_OTM_PROB':[],'CURRENT_PRICE':[],'PRICE@EXPIRE':[]}
-			# if cc >=50:
-			# 	break
-
-			# cc += 1
-			for i in single_day_options.index:
-
-				for j in single_day_options.index:
+				for j in single_day_op_index:
 					if i >= j:
 						continue
 					else:
-						op_low = single_day_options.iloc[i].copy()
-						op_high = single_day_options.iloc[j].copy()
-
-						if (op_low.STRIKE > op_low.CURRENT_PRICE): # Call spread: lower strike is sell, in this case sell op_low
-
-							earn = self.calculate_expected_earn('CALL', sell = op_low, buy = op_high)
-							earn_ratio = earn/ abs(op_low.STRIKE - op_high.STRIKE)
-
-							single_day_call_spreads['QUOTE_TIME_EST'].append(date)
-							single_day_call_spreads['DTE'].append(op_low.DTE)
-							single_day_call_spreads['isCALL'].append(1)
-							single_day_call_spreads['SELL_STRIKE'].append(op_low.STRIKE)
-							single_day_call_spreads['SELL_ATM_IV'].append(op_low.C_ATM_IV)
-							single_day_call_spreads['BUY_ATM_IV'].append(op_high.C_ATM_IV)
-							single_day_call_spreads['SELL_IV'].append(op_low.C_IV)
-							single_day_call_spreads['BUY_IV'].append(op_high.C_IV)
-							single_day_call_spreads['SELL_PRICE'].append(op_low.C_BID)
-							single_day_call_spreads['BUY_PRICE'].append(op_high.C_ASK)
-							single_day_call_spreads['BUY_STRIKE'].append(op_high.STRIKE)
-							single_day_call_spreads['PREMIUM'].append(op_low.C_BID - op_high.C_ASK)
-							single_day_call_spreads['MAX_LOSS'].append(op_high.STRIKE - op_low.STRIKE - (op_low.C_BID - op_high.C_ASK))
-							single_day_call_spreads['EXPECTED_EARN'].append(earn)
-							single_day_call_spreads['EXPECTED_EARN_RATIO'].append(earn_ratio)
-							single_day_call_spreads['SELL_OTM_PROB'].append(op_low.C_OTM_PROB)
-							single_day_call_spreads['BUY_OTM_PROB'].append(op_high.C_OTM_PROB)
-							single_day_call_spreads['CURRENT_PRICE'].append(op_high.CURRENT_PRICE)
-							single_day_call_spreads['PRICE@EXPIRE'].append(op_high['PRICE@EXPIRE'])
+						op_low = single_day_options.loc[i].copy()
+						op_high = single_day_options.loc[j].copy()
+						
+						if isCall:
+							op_sell, op_buy = op_low, op_high
+						else:
+							op_sell, op_buy = op_high, op_low
 							
+	#                     if (op_low.STRIKE > op_low.CURRENT_PRICE): # Call spread: lower strike is sell, in this case sell op_low
 
-						if (op_high.STRIKE < op_high.CURRENT_PRICE): # Put spread: higher strike is sell, in this case sell op_high
+						earn = calculate_expected_earn(sell = op_sell, buy = op_buy)
+						earn_ratio = earn/ (abs(op_sell.StrikePrice - op_buy.StrikePrice) + 0.0000001)
 
-							earn = self.calculate_expected_earn('PUT', sell = op_high, buy = op_low)
-							earn_ratio = earn/ abs(op_low.STRIKE - op_high.STRIKE)
+						spreads_dict['QuoteDate'].append(date)
+						spreads_dict['ExpirationDate'].append(op_sell.ExpirationDate)
+						spreads_dict['Dte'].append(op_sell.Dte)
+						spreads_dict['isCALL'].append(isCall)
+						spreads_dict['SellStrike'].append(op_sell.StrikePrice)
+						spreads_dict['ATM_IV'].append(op_sell.ATM_IV)
+						spreads_dict['Sell_IV'].append(op_sell.ImpliedVolatility)
+						spreads_dict['Buy_IV'].append(op_buy.ImpliedVolatility)
+						spreads_dict['SellPrice'].append(op_sell.BidPrice)
+						spreads_dict['BuyPrice'].append(op_buy.AskPrice)
+						spreads_dict['BuyStrike'].append(op_buy.StrikePrice)
+						spreads_dict['Premium'].append(op_sell.BidPrice - op_buy.AskPrice)
+						spreads_dict['MaxLoss'].append(abs(op_buy.StrikePrice - op_sell.StrikePrice) - (op_sell.BidPrice - op_buy.AskPrice))
+						spreads_dict['ExpectedEarn'].append(earn)
+						spreads_dict['ExpectedEarnRatio'].append(earn_ratio)
+						spreads_dict['Sell_OTM_Prob'].append(op_sell.OTM_Prob)
+						spreads_dict['Buy_OTM_Prob'].append(op_buy.OTM_Prob)
+						spreads_dict['UnderlyingPrice'].append(op_buy.UnderlyingPrice)
+						spreads_dict['Price@Expiration'].append(op_buy['Price@Expiration'])
 
-							single_day_put_spreads['QUOTE_TIME_EST'].append(date)
-							single_day_put_spreads['DTE'].append(op_high.DTE)
-							single_day_put_spreads['isCALL'].append(0)
-							single_day_put_spreads['SELL_STRIKE'].append(op_high.STRIKE)
-							single_day_put_spreads['SELL_ATM_IV'].append(op_high.P_ATM_IV)
-							single_day_put_spreads['BUY_ATM_IV'].append(op_low.P_ATM_IV)
-							single_day_put_spreads['SELL_IV'].append(op_high.P_IV)
-							single_day_put_spreads['BUY_IV'].append(op_low.P_IV)
-							single_day_put_spreads['SELL_PRICE'].append(op_high.P_BID)									
-							single_day_put_spreads['BUY_PRICE'].append(op_low.P_ASK)
-							single_day_put_spreads['BUY_STRIKE'].append(op_low.STRIKE)
-							single_day_put_spreads['PREMIUM'].append(op_high.P_BID - op_low.P_ASK)
-							single_day_put_spreads['MAX_LOSS'].append(op_high.STRIKE - op_low.STRIKE - (op_high.P_BID - op_low.P_ASK))
-							single_day_put_spreads['EXPECTED_EARN'].append(earn)
-							single_day_put_spreads['EXPECTED_EARN_RATIO'].append(earn_ratio)
-							single_day_put_spreads['SELL_OTM_PROB'].append(op_high.P_OTM_PROB)
-							single_day_put_spreads['BUY_OTM_PROB'].append(op_low.P_OTM_PROB)
-							single_day_put_spreads['CURRENT_PRICE'].append(op_high.CURRENT_PRICE)
-							single_day_put_spreads['PRICE@EXPIRE'].append(op_high['PRICE@EXPIRE'])
+		all_spreads = pd.DataFrame(spreads_dict)
 
-
-			# Save the best call/put spread of the day in a dictionary
-			# print(single_day_options.iloc[i].QUOTE_TIME_EST)
-			df_single_day_call_spreads = pd.DataFrame(single_day_call_spreads)
-			df_single_day_put_spreads = pd.DataFrame(single_day_put_spreads)
-			# df_single_day_call_spreads = df_single_day_call_spreads.sort_values(by='EXPECTED_EARN', ascending = False).reset_index(drop=True)
-			# df_single_day_put_spreads = df_single_day_put_spreads.sort_values(by='EXPECTED_EARN', ascending = False).reset_index(drop=True)
-
-			# if (len(df_single_day_call_spreads) > 0):
-			# 	best_call_spread_today = df_single_day_call_spreads.head(1)
-			# 	best_call_spread_dict[date] = best_call_spread_today
-			# print('Num of call spreads today:',len(df_single_day_call_spreads))
-
-			# if (len(df_single_day_put_spreads) > 0):
-			# 	best_put_spread_today = df_single_day_put_spreads.head(1)
-			# 	best_put_spread_dict[date] = best_put_spread_today
-			# print('Num of put spreads today:',len(df_single_day_put_spreads))
-
-			# calls_list.append(df_single_day_put_spreads)
-			# puts_list.append(df_single_day_call_spreads)
-
-			all_puts = pd.concat((all_puts,df_single_day_put_spreads),ignore_index = True)
-			all_calls = pd.concat((all_calls,df_single_day_call_spreads),ignore_index = True)
-
-			time_5 = time.time()
-			ptime_5 = time.process_time()
-
-		time_1 = time.time()
-		ptime_1 = time.process_time()
-		print(f'Done Calculating All Spreads with DTE = %s! CPU time: %.2f seconds, Total time: %.2f seconds'%(str(DTE), ptime_1 - ptime_0, time_1 - time_0))
-		# return pd.DataFrame(best_call_spread_dict).T.copy(), pd.DataFrame(best_put_spread_dict).T.copy()
-		return all_calls, all_puts
-
-
-	def calculate_expected_earn(self, op_type, sell, buy):
-
-		expected_earn = -1
-
-		if op_type in ['c', 'C', 'call', 'Call', 'CALL']:
-			premiun = sell.C_BID - buy.C_ASK
-			max_loss = buy.STRIKE - sell.STRIKE
-			expected_earn = premiun - sell.C_ITM_PROB * max_loss
-
-		elif op_type in ['p', 'P', 'put', 'Put', 'PUT']:
-			premiun = sell.P_BID - buy.P_ASK
-			max_loss = sell.STRIKE - buy.STRIKE
-			expected_earn = premiun - sell.P_ITM_PROB * max_loss
-
-		return expected_earn
-
-
+		return all_spreads
 
 
 	def get_all_spreads(self, _DTE = 14, _start_date = None , _end_date = None):
@@ -260,4 +232,5 @@ class spreads_prep:
 
 		self.all_calls, self.all_puts = self.spread_search(_DTE, _start_date, _end_date)
 		return self.all_calls, self.all_puts
+
 
