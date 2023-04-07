@@ -133,6 +133,8 @@ class backtest:
 		stop_loss = self.stop_loss
 		take_profit = self.take_profit
 
+		cur_total_funds = self.init_fund
+
 		for value in time_range.range(datetime.timedelta(days=1)):
 			if fund < self.min_fund:
 				self.min_fund = fund
@@ -143,8 +145,8 @@ class backtest:
 			
 			if spreadss.loc[spreadss.QuoteDate == value].shape[0]:
 				hold = (spreadss.loc[spreadss.QuoteDate == value]).iloc[0]
-
-				open_quantity = min(math.floor(fund * self.position_size/ (hold.Collateral*100)), math.floor((fund - (1 - self.max_position)*self.init_fund)/ (hold.Collateral*100)))
+				ava_funds = fund - self.max_position * cur_total_funds
+				open_quantity = math.floor(ava_funds * self.position_size/ (hold.Collateral*100))
 
 				if open_quantity == 0:
 					pass
@@ -154,7 +156,7 @@ class backtest:
 					premium = hold.Premium
 					hold_idx = hold.name
 					sp_type = 'C' if hold.isCALL else 'P'
-					sp_info = (hold.Spread_idx, open_quantity, collateral, round(premium,2), hold_idx)
+					sp_info = (hold.Spread_idx, open_quantity, collateral, round(premium,2), hold_idx) # j below is defined here
 					hold_dict[hold.Spread_idx] = sp_info
 
 					self.trades_history_dict['Date'].append(value)
@@ -192,6 +194,7 @@ class backtest:
 							profit =  (1 - stop_loss) * j[3] * 100 * j[1] # Assuming we are able to cap loss at max stop-loss 
 							self.trades_history_dict['Profit'].append(profit)
 							fund += j[2] + profit
+							cur_total_funds += profit
 							# fund += j[2] - (stop_loss - 1) * j[3] * 100 * j[1]
 
 							self.trades_history_dict['Funds After'].append(fund)
@@ -212,7 +215,7 @@ class backtest:
 							self.trades_history_dict['Profit'].append(take_profit * j[3] * 100 * j[1])
 
 							fund += j[2] + take_profit * max(0, j[3]) * 100 * j[1]
-
+							cur_total_funds += profit
 							self.trades_history_dict['Funds After'].append(fund)
 							hold_dict.pop(i, 'No Key found')
 							self.trades_history_dict['# of strategies holding'].append(self.trades_history_dict['# of strategies holding'][-1] - 1)
@@ -225,6 +228,7 @@ class backtest:
 					close_spread, close_quantity, release_collateral = spreadss.loc[hold_dict[i][4]], hold_dict[i][1], hold_dict[i][2]
 					close_premium = close_spread.Premium
 					profit = close_spread.Actual_Earn * 100 * close_quantity
+					cur_total_funds += profit
 
 
 					## On the last day we cannot close or open any contracts.
